@@ -1,145 +1,185 @@
 package simulations
 
-import math.random
+import scala.math.random
+
 
 class EpidemySimulator extends Simulator {
 
-  def randomBelow(i: Int) = (random * i).toInt
 
   protected[simulations] object SimConfig {
-    val population: Int = 10
-    val roomRows: Int = 8
+    val population: Int = 300
+    val roomRows   : Int = 8
     val roomColumns: Int = 8
-    val prevalence:Float = 0.2f
-    val transmissibility:Float = 0.4f
-    val movingDelay:Int = 5
-    val deathproability:Float = 0.25f
 
-    // to complete: additional parameters of simulation
+    val prevalenceRate = 0.01
+    val deathRate = 0.25
+    val infectionRate = 0.4
+
+    val airplanes = false
+    val airplaneProbability = 0.01
+
+    val chosenFew = false
+    val vipRate = 0.05
+    
+    val reduceMobility = false
   }
 
   import SimConfig._
 
-  
-  val persons: List[Person] = {
-    val pps = List.tabulate(population)(n=> new Person(n));  // to complete: construct list of persons
-    pps.filter( p => { p.id < population * prevalence} ).foreach( p=>{
-	    p.getSick
-	})
-	pps
+  var persons: List[Person] = List.tabulate(population)(n=> new Person(n))
+
+  def forPersons(row: Int, col: Int, action: (Person) => Boolean) = {
+    def forPersons0(persons: List[Person]): Boolean = persons match {
+      case x :: xs =>
+        if(x.row == row && x.col == col && action(x)) {
+          true
+        } else forPersons0(xs)
+      case Nil => {
+        false
+      }
+    }
+    forPersons0(persons)
   }
 
-  persons.foreach( p=>{
-    movePerson( p )
-  })
-  
+  def isDangerous(row: Int, col: Int): Boolean = {
+    forPersons(row, col, x => x.infected)
+  }
 
+  def isContagious(row: Int, col: Int): Boolean = {
+    forPersons(row, col, x => x.infected || x.sick || x.dead)
+  }
 
-  
-  def isRoomInfectious( r: Int, c: Int ):Boolean = {
-    val ps = persons.filter(p => { 
-      ( p.col == c ) &&
-      ( p.row == r ) &&
-      ( p.sick || p.dead)
+  def contaminate(row: Int, col: Int, exception: Int) {
+    forPersons(row, col, x => {
+      if(x.id != exception && random <= infectionRate) x.infect
+      false
     })
-    return !ps.isEmpty
   }
-  
-  def movePerson( p: Person ){
-    def infectAction() {
-      val pp:Float = randomBelow( 10 ) / 10f;
-      if ( pp < transmissibility && p.isInfectable ) p.infected = true
-      afterDelay( 6 ) { p.getSick }
-      afterDelay( 14 ){ p.probablyDie }
-      afterDelay( 16 ){ p.getImmune }
-      afterDelay( 18 ){ p.getHealthy }
-    }
-    
-    def moveAction() {
-      val moveDelay = randomBelow( movingDelay )
-      afterDelay(moveDelay) { p.randomMove }
-      p addAction infectAction
-      //p addAction moveAction
-      afterDelay(moveDelay + 1) { 
-        //println( "insert movement for ", p )
-        movePerson(p) 
-      } 
-      //one difficulty: move after move
-    }
-    if( !p.dead ) p addAction moveAction
-  }
-  
-  
-
 
   class Person (val id: Int) {
+    //var infected = (random <= prevalenceRate)
     var infected = false
     var sick = false
     var immune = false
     var dead = false
 
     // demonstrates random number generation
-    var row: Int = randomBelow(roomRows)
-    var col: Int = randomBelow(roomColumns)
-    
-    
-    private var actions: List[Simulator#Action] = List()
+    var row: Int = (random * roomRows).toInt
+    var col: Int = (random * roomColumns).toInt
 
-    override def toString():String={
-      //s"P[$id] [$row,$col]"
-      s"P[$id] [$infected]"
+    var nextRow: Int = row
+    var nextCol: Int = col
+
+    def scheduleMove {
+      // 1. After each move (and also after the beginning of the simulation), a person moves to one
+      // of their neighbouring rooms within the next 5 days (with equally distributed probability).
+      // Note that the first row is considered to be a neighbour of row eight (and vice versa) ; anal-
+      // ogously, the first column is a neighbour of column eight (and vice versa).
+      val proba = 1 + (random * 4).toInt
+      afterDelay(if(reduceMobility) (if(sick) proba * 4 else proba * 2) else proba)(move)
     }
-    //
-    // to complete with simulation logic
-    //
-	def addAction(a: Simulator#Action) {
-	  actions = a :: actions
-	  a()
-	}
-    
-    def isInfectable():Boolean={
-      return !dead && !immune && !sick && !immune && isRoomInfectious(row, col)
+
+    def move {
+      if(!dead) {
+        def testMove(newRow: Int, newCol: Int): Boolean = {
+          if(!isDangerous(newRow, newCol)) {
+            nextRow = newRow
+            nextCol = newCol
+            // apply decisions at the end
+            afterDelay(0)(applyDecisions)
+            return true
+          }
+          false
+        }
+
+        val moves = scala.util.Random.shuffle(List(
+          ((row - 1 + roomRows) % roomRows, col),
+          ((row + 1)            % roomRows, col),
+          (row, (col + 1)               % roomColumns),
+          (row, (col - 1 + roomColumns) % roomColumns)
+        ))
+
+        def testMoves(): Unit = for(m <- moves) {
+            if(testMove(m._1, m._2)) return
+        }
+        testMoves()
+        
+        if(airplanes && random <= airplaneProbability) {
+          nextRow = (random * (roomRows   )).asInstanceOf[Int]
+          nextCol = (random * (roomColumns)).asInstanceOf[Int]
+          afterDelay(0)(applyDecisions)
+        }
+      }
+      scheduleMove
     }
-    
-    def getSick{
+
+    def applyDecisions {
+      // move
+      row = nextRow
+      col = nextCol
+
+      // if there are contagious people (infected sick or dead) we might get infected ourselves!
+      if(isContagious(row, col) && random <= infectionRate)
+        infect
+    }
+
+    def sicken {
+      //println(id + " is a sick bastard!")
       sick = true
     }
     
-    def getImmune{
-      if(dead) return
-      immune = true
-    }
-    
-    def getHealthy{
-    	if(dead) return
-	    infected = false
-	    sick = false
-	    immune = false
-	    dead = false
-    }
-    
-    def probablyDie{
-      val pp:Float = randomBelow( 10 ) / 10f;
-      if( pp < deathproability ){
+    def maybeDie {
+      if(random <= deathRate) {
+        //println(id + " is dead meat!")
         dead = true
       }
     }
-    
-    def randomMove{
+
+    def immunize {
       if(dead) return
-      val left 	= (-1,0)
-      val right = (1,0)
-      val up 	= (0,-1)
-      val down  = (0,1)
-      val ds = List( left,right,up,down)
-      val rr = randomBelow(4)
-      val nrow = ( row + ds(rr)._2 + roomRows ) % roomRows
-      val ncol = ( col + ds(rr)._1 + roomColumns ) % roomColumns
-      if( !isRoomInfectious(nrow, ncol) ){
-        row = nrow
-        col = ncol 
-      }
-    	  
+      //println(id + " is one lucky son of a bitch!")
+      immune = true
+      infected = false
     }
+
+    def reset {
+      if(dead) return
+      //println(id + " is back in the game!")
+      infected = false
+      sick = false
+      immune = false
+    }
+
+    def infect {
+      if(immune || dead || infected) return
+
+      //println(id + " is now infected!")
+
+      // 4. When a person becomes infected, he does not immediately get sick, but enters a phase of
+      // incubation in which he is infectious but not sick.
+      infected = true
+      
+      // 5. After 6 days of becoming infected, a person becomes sick and is therefore visibly infectious.
+      afterDelay(6)(sicken)
+
+      // 6. After 14 days of becoming infected, a person dies with a probability of 25%. Dead people
+      // do not move, but stay visibly infectious.
+      afterDelay(14)(maybeDie)
+
+      // 7. After 16 days of becoming infected, a person becomes immune and is no longer visibly
+      // infectious, but remains infectious.
+      afterDelay(16)(immunize)
+
+      // 8. After 18 days of becoming infected, a person turns healthy. He is now in the same state as
+      // he was before his infection, which means that he can get infected again.
+      afterDelay(18)(reset)
+    }
+
+    scheduleMove
+
+    if(chosenFew && random <= vipRate) immune = true
+    if(random <= prevalenceRate) infect
+
   }
+
 }
