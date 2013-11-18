@@ -14,6 +14,7 @@ class EpidemySimulator extends Simulator {
     val prevalenceRate = 0.01
     val deathRate = 0.25
     val infectionRate = 0.4
+    val transmissibility:Float = 0.4f
 
     val airplanes = false
     val airplaneProbability = 0.01
@@ -26,7 +27,13 @@ class EpidemySimulator extends Simulator {
 
   import SimConfig._
 
-  var persons: List[Person] = List.tabulate(population)(n=> new Person(n))
+  var persons: List[Person] = {
+    val pps = List.tabulate(population)(n=> new Person(n){infected=false})
+    pps.filter( _.id < population*prevalenceRate ).foreach({
+      _.infect
+    })
+    pps
+  }
 
   def forPersons(row: Int, col: Int, action: (Person) => Boolean) = {
     def forPersons0(persons: List[Person]): Boolean = persons match {
@@ -41,12 +48,13 @@ class EpidemySimulator extends Simulator {
     forPersons0(persons)
   }
 
-  def isDangerous(row: Int, col: Int): Boolean = {
+  def isContagious(row: Int, col: Int): Boolean = {
     forPersons(row, col, x => x.infected)
   }
 
-  def isContagious(row: Int, col: Int): Boolean = {
-    forPersons(row, col, x => x.infected || x.sick || x.dead)
+  def isDangerous(row: Int, col: Int): Boolean = {
+    //forPersons(row, col, x => x.infected || x.sick || x.dead)
+    forPersons(row, col, x =>  x.sick || x.dead)
   }
 
   def contaminate(row: Int, col: Int, exception: Int) {
@@ -178,7 +186,7 @@ class EpidemySimulator extends Simulator {
     scheduleMove
 
     if(chosenFew && random <= vipRate) immune = true
-    if(random <= prevalenceRate) infect
+    //if(random <= prevalenceRate) infect
 
   }
 
