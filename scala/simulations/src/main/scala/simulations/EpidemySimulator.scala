@@ -84,7 +84,8 @@ class EpidemySimulator extends Simulator {
       // Note that the first row is considered to be a neighbour of row eight (and vice versa) ; anal-
       // ogously, the first column is a neighbour of column eight (and vice versa).
       val proba = 1 + (random * 4).toInt
-      afterDelay(if(reduceMobility) (if(sick) proba * 4 else proba * 2) else proba)(move)
+      //afterDelay(if(reduceMobility) (if(sick) proba * 4 else proba * 2) else proba)(move)
+      afterDelay(proba)(move)
     }
 
     def move {
@@ -133,6 +134,7 @@ class EpidemySimulator extends Simulator {
 
     def sicken {
       //println(id + " is a sick bastard!")
+      if(immune || dead ) return
       sick = true
     }
     
@@ -185,7 +187,7 @@ class EpidemySimulator extends Simulator {
 
     scheduleMove
 
-    if(chosenFew && random <= vipRate) immune = true
+    //if(chosenFew && random <= vipRate) immune = true
     //if(random <= prevalenceRate) infect
 
   }

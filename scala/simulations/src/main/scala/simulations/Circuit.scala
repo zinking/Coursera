@@ -90,7 +90,7 @@ abstract class CircuitSimulator extends Simulator {
           inverter(x, xbar)
           andGate(xbar, in, left)
           andGate(x,    in, right)
-          demux0(left, xs) ::: demux0(right, xs)
+          demux0(right, xs) ::: demux0(left, xs)
         case Nil =>
           List(in)
       }
@@ -129,6 +129,8 @@ object Circuit extends CircuitSimulator {
     in2.setSignal(true)
     run
   }
+  
+  
 
   //
   // to complete with orGateExample and demuxExample...
