@@ -3,8 +3,10 @@ package kvstore
 import akka.actor.Props
 import akka.actor.Actor
 import akka.actor.ActorRef
+import akka.actor.PoisonPill
+import akka.actor.Terminated
 import scala.concurrent.duration._
-
+import akka.event.Logging
 object Replicator {
   import Replica._
   case class Replicate(key: String, valueOption: Option[String], id: Long) extends Operation
@@ -24,7 +26,7 @@ class Replicator(val replica: ActorRef) extends Actor {
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
-
+  val log = Logging(context.system, this)
   // map from sequence number to pair of sender and request
   var acks = Map.empty[Long, (ActorRef, Replicate)] // this is acks for snapshot
   // a sequence of not-yet-sent snapshots (you can disregard this if not implementing batching)
@@ -40,9 +42,11 @@ class Replicator(val replica: ActorRef) extends Actor {
   /* TODO Behavior for the Replicator. */
   def receive: Receive = {
     case Replicate( k,v,id)=>{
-      replica ! Snapshot(k,v,_seqCounter)
+      val msg = Snapshot(k,v,_seqCounter)
+      replica ! msg 
       acks += ( _seqCounter -> (sender, Replicate( k,v,id) ))
       //sender ! Replicated(k,id)
+      log.info( s"Replicator send snapshot message $msg -> $replica ")
     }
     case SnapshotAck(k,seq)=>{
       val iv = acks(seq)
@@ -51,6 +55,11 @@ class Replicator(val replica: ActorRef) extends Actor {
       primary ! Replicated(k,id)//repsond primary that this is replciated
       acks -= seq
       nextSeq
+      log.info( s"Replicator received snapshot Ack $seq <- $sender ")
+    }
+    
+    case Terminated(_) => {
+      replica ! PoisonPill
     }
     case _ =>
   }
