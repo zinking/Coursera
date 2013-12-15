@@ -14,6 +14,7 @@ import akka.actor.SupervisorStrategy
 import akka.util.Timeout
 import akka.actor.Cancellable
 import akka.actor.Stash
+import akka.event.Logging
 
 object Replica {
   trait Operation {
@@ -28,61 +29,39 @@ object Replica {
   case class OperationAck(id: Long) extends OperationReply
   case class OperationFailed(id: Long) extends OperationReply
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
+  
+  case object RetryPersist 
+  case object RetryReplica 
+  
+  case object RetryTimeout
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
+
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with Stash {
   import Replica._
   import Replicator._
   import Persistence._
   import context.dispatcher
-
+  val log = Logging(context.system, this)
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
-  val persistor = context.actorOf( persistenceProps, "Persistence" )
+  val persistor = context.actorOf( persistenceProps )
   
   override val supervisorStrategy = OneForOneStrategy(){
-    case _ : PersistenceException => Restart
+    case _  => Restart
   }
   
-//  context.system.scheduler.schedule(0 milliseconds, 100 milliseconds )(reassure_persistence)
+
+  var acks = Map.empty[ Long , (ActorRef,Operation)] // id , requestor of the operation, operation 
   
-  var acks = Map.empty[(Long,ActorRef), Operation]
-  
-  /*
-   * This section deal with the primary global broadcast
-   */
-  //var schedule_broadcast:Cancellable = Nothing ;
-  
-  //var acks4replicate = Map.empty[(Long,ActorRef), (Replicate, Long)]
-  //def reassure_globalbroadcast = {
-  //def decide_globalbroadcast =
-  
-  def broadcast_primary_op( k:String, v:Option[String], id:Long ) = {
-    //val rps_only = replicators
-    replicators.foreach( replicator =>{
-	    val msg = Replicate(k,v,id)
-	    replicator ! msg
-	    acks += ( (id,replicator) -> msg )
-    })
-  }
-  
-  def broadcast_primary_all( ) = {
-	  kv.foreach({
-	    case (k,v)=> {
-	      val id = System.currentTimeMillis
-	      broadcast_primary_op(k,Some(v),id)
-	    }
-	  })
-   }  
+ 
   ////////////////////////////////////////////////////////////////////////////////////////////////
   
   var kv = Map.empty[String, String]
-  // a map from secondary replicas to replicators
   var secondaries = Map.empty[ActorRef, ActorRef]
-  // the current set of replicators
   var replicators = Set.empty[ActorRef]
   
   arbiter ! Join
@@ -96,96 +75,102 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       context.become(replica)
     }
   }
-  
-  def ask_for_persist( ss:ActorRef, k:String,  v:Option[String],  id:Long ):Cancellable={
-    val msg = Persist(k,v,id)
-    persistor ! msg
-    acks += ( (id,ss)-> msg )
+
+  def leader_in_replication( requester:ActorRef, id:Long ): Receive = {
+    case Persisted(k,id)  => {
+      log.info("Persisted ack +1",id)
+      acks -= id
+    }
     
-    return context.system.scheduler.schedule(0 milliseconds, 100 milliseconds )({
+	case Replicated(k,id) =>{
+	  log.info("Replicated ack +1",id)
+	  acks -= id
+	}
+	
+	case RetryPersist     => {
+	  
       val persist_cks = acks.filter({
         case (k,v) =>{
-          v.isInstanceOf[Persist]
+          v._2.isInstanceOf[Persist]
         }
-      })//filter persist messages
+      })
       
       persist_cks.foreach({ 
         case( k,v ) =>{
-           persistor ! msg
+           log.info(s"Retry Persist $k $v")
+           persistor ! v._2
         }
-      })//
-    })//end of check_persist
-   
-  }
-  
-  //def broad_cast_update( )
-
-  /* TODO Behavior for  the leader role. */
-  val leader_in_broadcast: Receive = {
-    case Persisted(k,id)=> {
-      //val senderA = acks(id)._1
-      //senderA ! OperationAck(id)
-      val k = ( id,sender )
-      acks -= k
-    }
-    
-    //case Persisted(k,id)  =>
-	case Replicated(k,id) =>{
-	  val k = ( id,sender )
-	  acks -= k
+      })  
 	}
+	
+	case RetryReplica     => {
+	  
+      val replica_cks = acks.filter({
+        case (k,v) =>{
+          v._2.isInstanceOf[Replicate]
+        }
+      })
+      
+      replica_cks.foreach({ 
+        case( k,v ) =>{
+           log.info(s"Retry replicate $k $v")
+           v._1 ! v._2
+        }
+      })  
+	}
+	
+	case RetryTimeout     => {
+	  log.info("Primary timeout Reached")
+	  if ( acks.size == 0 ) requester ! OperationAck(id)
+	  else {
+	    sender ! OperationFailed(id)
+	    acks = Map.empty[ Long , (ActorRef,Operation)]
+	  }
+	  context.become( leader )
+	  unstashAll()
+	}
+	
     
     case _=> stash();
+  }
+  
+  def begin_replication_process( sender:ActorRef, k:String, v:Option[String], id:Long)={
+	  context.become( leader_in_replication(sender,id) )
+	  log.info("Switching to replication");
+      val pmsg = Persist(k,v,id)
+      persistor ! pmsg
+      acks += ( id -> (persistor,pmsg) )
+      log.info("sending persist message for primary",pmsg);
+      replicators.foreach( replicator =>{
+	    val rmsg = Replicate(k,v,id)
+	    replicator ! rmsg
+	    acks += ( id -> (replicator,rmsg) )
+	    log.info("sending replicate message to replicator",rmsg);
+      })
+      val scheduledRetryPersist = context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, RetryPersist)
+      val scheduledRetryReplica = context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, RetryReplica)
+      context.system.scheduler.schedule(Duration.Zero, 1 second, self, RetryTimeout)
   }
 
   val leader: Receive = {
     case Insert(k,v,id) => {
       kv += ( k->v )
-      //p_actor ! Persist(k,Some(v),id)
-      //sender ! OperationAck(id)
-      context.become( leader_in_broadcast )
-      val ck_persist = ask_for_persist( sender, k,Some(v), id)
-      broadcast_primary_op(k,Some(v),id)
-      context.system.scheduler.scheduleOnce(1 seconds )({
-    	  ck_persist.cancel()
-		  if ( acks.size == 0 ) sender ! OperationAck(id)
-		  else {
-		    sender ! OperationFailed(id)
-		    acks = Map.empty[(Long,ActorRef), Operation]
-		  }
-		  context.become( leader )
-		  unstashAll()
-      })
-      
+      begin_replication_process(sender,k,Some(v),id)
     }
     case Remove(k,id)   => {
       kv -= k
-      context.become( leader_in_broadcast )
-      val ck_persist = ask_for_persist( sender, k,None, id)
-      broadcast_primary_op(k,None,id)
-      context.system.scheduler.scheduleOnce(1 seconds )({
-    	  ck_persist.cancel()
-		  if ( acks.size == 0 ) sender ! OperationAck(id)
-		  else {
-		    sender ! OperationFailed(id)
-		    acks = Map.empty[(Long,ActorRef), Operation]
-		  }
-		  context.become( leader )
-		  unstashAll()
-      })
+      begin_replication_process(sender,k,None,id)
     }
     case Get(k,id)      => {
       sender ! GetResult(k,kv.get(k),id)
     }
     
-    
-    
-    //case class Replicas(replicas: Set[ActorRef])
     case Replicas( replicas ) =>{
       var rps = Set.empty[ActorRef]
       replicas.foreach( {
         case r:Replica =>{
           if( r != this ){
+              log.debug("replication for ",r);
 	          val replicator = context.actorOf( Replicator.props(r)  )
 	          r.secondaries += ( r->replicator )
 	          rps += replicator
@@ -194,20 +179,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         
       })
       replicators = rps
-      //schedule_broadcast = context.system.scheduler.schedule(0 milliseconds, 100 milliseconds )(reassure_globalbroadcast)
-      //scheduleOnce
       
-      broadcast_primary_all()
-      context.system.scheduler.scheduleOnce(1 seconds )({
-		    if ( acks.size == 0 ) arbiter ! OperationAck
-		    else {
-		      arbiter ! OperationFailed
-		      acks = Map.empty[(Long,ActorRef), Operation]
-		    }
-		    context.become( leader )
-		    unstashAll()
+      kv.foreach({
+        case (k,v)=>{
+          val id = System.nanoTime
+          self ! Insert(k,v,id)
+        }
       })
-      context.become( leader_in_broadcast )
     }
     
 
@@ -217,6 +195,18 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   
   
   ///////////////////////////////////////////////////////////////////////////////
+  
+  def begin_persist_process( sender:ActorRef, k:String, v:Option[String], seq:Long)={
+	  log.info(s"Secondary wait for persist");
+	  //val id = System.nanoTime
+	  val id = seq
+      val pmsg = Persist(k,v,id)
+      persistor ! pmsg 
+      acks += ( id -> (sender,pmsg) ) //DIFF between primary and secondary, primary have context to track requestor while secondary 
+      	
+      log.info(s"sending persist message for secondary $pmsg");
+      val scheduledRetryPersist = context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, RetryPersist)
+  }
 
   var cur_seq = 0L
   /* TODO Behavior for the replica role. */
@@ -227,8 +217,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
            case Some(vv) => kv += ( k->vv )
            case None => kv -= k
          }
-         //sender ! SnapshotAck( k, seq )
-         ask_for_persist( sender, k,v, seq)//assumption seq and id won't mix
+         begin_persist_process(sender,k,v,seq)
          cur_seq += 1
       }
       else if( seq < cur_seq ){
@@ -237,10 +226,29 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       }
     }
     
-    case Persisted(k,seq)=> {
-      val msg = SnapshotAck( k, seq )
-      secondaries(self) ! msg
+    case Persisted(k,id)=> {
+      val msg = SnapshotAck(k,id)
+      val osender = acks(id)._1
+      osender ! msg
+      acks -= id
+      log.info(s"Secondary ACK persitence with $msg");
     }
+    
+    case RetryPersist     => {
+	  
+      val persist_cks = acks.filter({
+        case (k,v) =>{
+          v._2.isInstanceOf[Persist]
+        }
+      })
+      
+      persist_cks.foreach({ 
+        case( k,v ) =>{
+           log.info(s"Retry Persist for secondary $k $v")
+           persistor ! v._2
+        }
+      })  
+	}
     
     case Get(k,id)      => {
       sender ! GetResult(k,kv.get(k),id)
