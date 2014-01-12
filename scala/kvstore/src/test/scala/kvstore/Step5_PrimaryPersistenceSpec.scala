@@ -87,6 +87,7 @@ class Step5_PrimaryPersistenceSpec extends TestKit(ActorSystem("Step5PrimaryPers
     val arbiter = TestProbe()
     val persistence = TestProbe()
     val primary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case4-primary")
+    //val primary = system.actorOf(Replica.props(arbiter.ref, probeProps(persistence)), "case4-primary")
     val secondary = TestProbe()
     val client = session(primary)
 

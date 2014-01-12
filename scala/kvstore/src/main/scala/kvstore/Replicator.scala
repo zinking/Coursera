@@ -27,9 +27,7 @@ class Replicator(val replica: ActorRef) extends Actor {
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
   val log = Logging(context.system, this)
-  // map from sequence number to pair of sender and request
   var acks = Map.empty[Long, (ActorRef, Replicate)] // this is acks for snapshot
-  // a sequence of not-yet-sent snapshots (you can disregard this if not implementing batching)
   var pending = Vector.empty[Snapshot]
   
   var _seqCounter = 0L
@@ -39,42 +37,29 @@ class Replicator(val replica: ActorRef) extends Actor {
     ret
   }
   
+  context.system.scheduler.schedule(100 millis, 100 millis, context.self, "Retry")
+  
   /* TODO Behavior for the Replicator. */
   def receive: Receive = {
-    case Replicate( k,v,id)=>{
-      val msg = Snapshot(k,v,_seqCounter)
-      replica ! msg 
-      acks += ( _seqCounter -> (sender, Replicate( k,v,id) ))
-      //sender ! Replicated(k,id)
-      log.info( s"Replicator send snapshot message $msg -> $replica ")
+    case rep @ Replicate(key, valueOpt, id) => {
+      val seq = nextSeq
+      acks += seq -> (sender, rep) 
+      replica ! Snapshot(key, valueOpt, seq)
     }
-    case SnapshotAck(k,seq)=>{
-      val iv = acks(seq)
-      val primary = iv._1
-      val id = iv._2.id
-      primary ! Replicated(k,id)//repsond primary that this is replciated
-      acks -= seq
-      nextSeq
-      log.info( s"Replicator received snapshot Ack $seq <- $sender ")
+    case SnapshotAck(key, seq) => {
+      acks.get(seq).map{entry =>
+        val (primary, command) = entry
+        primary ! Replicated(key, command.id)
+      }
+      acks -= seq 
     }
-    
-    case Terminated(_) => {
-      replica ! PoisonPill
+    case "Retry" => {
+      acks.foreach(entry => {
+        val (seq, (primary, replicate)) = entry
+        replica ! Snapshot(replicate.key, replicate.valueOption, seq)
+      })
     }
-    case _ =>
   }
   
-  //import akka.actor.Scheduler
-  //Scheduler.schedule(actor, Message(), 0L, 5L, TimeUnit.MINUTES)
-  //schedule(0 milliseconds, 100 milliseconds, reassure_replica )
-  context.system.scheduler.schedule(0 milliseconds, 100 milliseconds )(reassure_replica)
-
-
-  def reassure_replica = {
-    acks.foreach({ item =>
-      val r = item._2._2;
-      replica ! Snapshot( r.key, r.valueOption, r.id )
-    })
-  }
 
 }

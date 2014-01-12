@@ -1,6 +1,6 @@
 package kvstore
 
-import akka.actor.{ OneForOneStrategy, Props, ActorRef, Actor }
+import akka.actor.{ OneForOneStrategy, Props, ActorRef, Actor, AllForOneStrategy }
 import kvstore.Arbiter._
 import scala.collection.immutable.Queue
 import akka.actor.SupervisorStrategy.Restart
@@ -36,7 +36,6 @@ object Replica {
   case object RetryReplica 
   
   case class RetryTimeout( req:ActorRef, id:Long)
-  //case object ReplicaTimeout
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
@@ -56,32 +55,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   val persistance = context.actorOf(persistenceProps)
   //val persistance = context.actorFor(persistenceProps)
   
-  override val supervisorStrategy = OneForOneStrategy(){
-    case _ : PersistenceException => Restart
+  override val supervisorStrategy = AllForOneStrategy(){
+    case _:PersistenceException => Restart
     case _:ActorKilledException => Stop 
   }
-  
 
-  //var packs = Map.empty[ Long , (ActorRef,Operation,ActorRef)] // id , requestor of the operation, operation 
-  //var racks = Map.empty[ Long , (ActorRef,Operation,ActorRef)]
-  
-  //var packs = Map.empty[Long, (ActorRef,Operation,Set[ActorRef]) ];
-  //var racks = Map.empty[Long, (ActorRef,Operation,Set[ActorRef]) ];
   
   var acks = Map.empty[Long,(ActorRef,Map[ActorRef,Operation])]
   
-  //redesign the ack mechanism:
-  //for persist it is always: primary/replcia sending to persistor with persist message
-  //    when retry ask the 
- 
   ////////////////////////////////////////////////////////////////////////////////////////////////
   
   var kv = Map.empty[String, String]
   var secondaries = Map.empty[ActorRef, ActorRef]
   var replicators = Set.empty[ActorRef]
   
-  //val scheduledRetryPersist = context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, RetryPersist)
-  //val scheduledRetryReplica = context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, RetryReplica)
   context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, "Retry")
 
 
@@ -104,8 +91,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       persistance ! pmsg
       var ackm = Map.empty[ActorRef,Operation] 
       ackm += ( persistance -> pmsg )
-      //log.info(s"Primary actor: $self");
-      //log.info(s"Primary persi: $persistance");
       log.info(s"Primary sending persist message: $persistance <- $pmsg");
       val rmsg = Replicate(k,v,id)
       replicators.foreach( replicator =>{
@@ -121,7 +106,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   
   def handle_replica_message( replicas:Set[ActorRef])={
       log.info(s"replica request received  for $replicas");
-      //var rps = Set.empty[ActorRef] //these are replicators
       
       val nreplicas = replicas
       val oreplicas = secondaries.keySet
@@ -257,7 +241,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 	}
 	
 	case RetryTimeout(requester,id)     => {
-	  log.info("Primary timeout Reached")
+	  //log.info(s"Primary timeout Reached for OP:$id")
 	  
 	  acks.get(id).map( entry=>{
 	    val (requester,ackm) = entry
@@ -281,37 +265,32 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   ///////////////////////////////////////////////////////////////////////////////
   
   def begin_persist_process( sender:ActorRef, k:String, v:Option[String], seq:Long)={
-	  log.info(s"Secondary wait for persist");
-	  //val id = System.nanoTime
 	  val id = seq
       val pmsg = Persist(k,v,id)
       persistance ! pmsg 
-      //log.info(s"Secondary actor: $self");
-      //log.info(s"Secondary persi: $persistance");
-      //packs += ( id -> (sender,pmsg,sender) ) //DIFF between primary and secondary, primary have context to track requestor while secondary 
       var ackm = Map.empty[ActorRef,Operation]
 	  ackm += ( persistance -> pmsg )
       acks += ( id -> (sender, ackm ))
-      log.info(s"ACKs content $acks")
-      log.info(s"sending persist message for secondary $pmsg -> $persistance");
-      //val scheduledRetryPersist = context.system.scheduler.schedule(Duration.Zero, 100 milliseconds, self, RetryPersist)
+      log.info(s"Secondary send $pmsg -> $persistance");
   }
 
   var cur_seq = 0L
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
-    case Snapshot(k,v,seq) => {
+    case msg@Snapshot(k,v,seq) => {
       if( cur_seq == seq ){
          v match {
            case Some(vv) => kv += ( k->vv )
            case None => kv -= k
          }
+         log.info(s"Secondary received $msg and waiting for persist");
          begin_persist_process(sender,k,v,seq)
-         cur_seq += 1
+         //cur_seq += 1
       }
       else if( seq < cur_seq ){
+        log.info(s"Secondary reset sequence from $cur_seq to ${seq+1}");
         sender ! SnapshotAck( k, seq )
-        cur_seq = seq + 1
+        //cur_seq = seq + 1
       }
     }
     
@@ -321,9 +300,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         val (requester, ackm ) = entry
         acks -= id
         requester ! msg
+        cur_seq += 1
+        log.info(s"Secondary persisted change,  SnapshotACK $requester <- $msg");
+        
       })
       
-      log.info(s"Secondary ACK persitence with $msg");
+      
+      
     }
     
     case "Retry" =>{
