@@ -2,8 +2,8 @@ import sys
 import nltk
 import math
 import time
-from collections import defaultdict
 import re
+from collections import defaultdict
 
 
 START_SYMBOL = '*'
@@ -26,7 +26,7 @@ def split_wordtags(brown_train):
     brown_tags = []
     for sentence in brown_train:
 
-        sentence = "%s %s %s %s"%(S1,S1,sentence.rstrip(),S2)
+        sentence = "%s %s %s %s %s"%(S1,S1,sentence.rstrip(),S2,S2)
 
         #s_tokens = nltk.word_tokenize(sentence)
         s_tokens = sentence.split(" ")
@@ -88,7 +88,7 @@ def calc_known(brown_words):
     for item in awords: uni_count[item]+=1
     known_words = set([])
     for w,c in uni_count.items():
-        if c > 5 :
+        if c > 5:
             known_words.add(w)
     return known_words
 
@@ -103,7 +103,7 @@ def replace_rare(brown_words, known_words):
             if word in known_words:
                 nlwords.append(word)
             else:
-                nlwords.append(RARE_SYMBOL)
+                nlwords.append(get_morphed_rareword(word))
         brown_words_rare.append(nlwords)
     return brown_words_rare
 
@@ -152,6 +152,7 @@ def q4_output(e_values, filename):
         outfile.write(output + '\n')
     outfile.close()
 
+
 def get_morphed_rareword(word):
     ####https://github.com/zachguo/HMM-Trigram-Tagger/blob/master/HMM.py
     if not re.search(r'\w',word):
@@ -169,6 +170,46 @@ def get_morphed_rareword(word):
     else:
         return '<OTHER>'
 
+def viterbi_sent(sent,known_words,tagset,Q,E):
+    taglist = list(tagset)
+    def get_possible_tags(k):
+        if k == -1:
+            return set([''])
+        if k == 0:
+            return set([''])
+        else:
+            return tagset
+    V = {}
+    path = {}
+    # run
+    #sys.stderr.write("entering k loop\n")
+    for k in range(1,len(sent)+1):
+        temp_path = {}
+        word = sent[k-1] if k>=1 else ''
+        ## handling unknown words in test set using low freq words in training set
+        if word not in known_words:
+            word = get_morphed_rareword(word)
+        #sys.stderr.write("entering u loop "+str(k)+"\n")
+        for u in get_possible_tags(k-1):
+            #sys.stderr.write("entering v loop "+str(u)+"\n")
+            for v in get_possible_tags(k):
+                prev_w = taglist[0]
+                for w in get_possible_tags(k-2):
+                    qval = Q.get((w,u,v),LOG_PROB_OF_ZERO)
+                    eval = E.get((word,v),LOG_PROB_OF_ZERO)
+                    nval = V.get((k-1,w,u),LOG_PROB_OF_MINI) + qval + eval
+                    if nval > V.get((k,u,v)):
+                        V[k,u,v] = nval
+                        prev_w = w
+                    #V[k,u,v],prev_w = max([
+                    #    (V[k-1,w,u] * Q[w,u,v] * E[word,v],w) for w in get_possible_tags(k-2)
+                    #])
+                temp_path[k-1,k] = path[k-2,k-1] if path.has_key((k-2,k-1)) else [prev_w,u] + [v]
+        path = temp_path
+    # last step
+    # prob,umax,vmax = max([(V[len(sent),u,v] * Q.get((u,v,''),LOG_PROB_OF_ZERO),u,v)  for u in tagset for v in tagset])
+    return path[len(sent)-1,len(sent)]
+
 
 # TODO: IMPLEMENT THIS FUNCTION
 # This function takes data to tag (brown_dev_words), a set of all possible tags (taglist), a set of all known words (known_words),
@@ -184,84 +225,17 @@ def get_morphed_rareword(word):
 # original words of the sentence!
 def viterbi(brown_dev_words, tagset, known_words, q_values, e_values):
     tagged = []
-    taglist = list(tagset)
-    #T = len(known_words)
-    N = len(taglist)
-    for words in brown_dev_words:
-        owords = words
-        ewords = [START_SYMBOL,START_SYMBOL]
-        ewords.extend(words)
-        ewords.append(STOP_SYMBOL)
-        ewords.append(STOP_SYMBOL)
-        words = ewords #enhanced words
-        T = len(words)
-        vb = {}
-        bp = {}
-
-
-        ##### start of the viterbi algorithm
-        STSTATE=0
-        word = words[2]
-        word = word if word in known_words else get_morphed_rareword(word)
-        for tagb in taglist:
-            for tagc in taglist:
-                qkey = (START_SYMBOL,tagb,tagc)
-                qval = q_values.get(qkey,LOG_PROB_OF_ZERO)
-                ekey = (word,tagc)
-                eval = e_values.get(ekey,LOG_PROB_OF_ZERO)
-                nvbkey = (2,tagb,tagc)
-                vb[nvbkey] = qval+eval #log prob
-
-        for t in range(3,T):
-            word = words[t]
-            word = word if word in known_words else get_morphed_rareword(word)
-            for tagc in taglist: #N^2 lookup for current tag
-                ekey = (word,tagc)
-                eval = e_values.get(ekey,LOG_PROB_OF_ZERO)
-                for tagb in taglist:
-                    prev_a = taglist[0]
-                    nvbkey = (t,tagb,tagc)
-                    for taga in taglist:
-                        ovbkey = (t-1,taga,tagb)
-                        ovbval = vb.get(ovbkey,LOG_PROB_OF_MINI)
-                        qkey = (taga,tagb,tagc)
-                        qval = q_values.get(qkey,LOG_PROB_OF_ZERO)
-                        nobst = ovbval + qval + eval
-                        if nobst > vb.get(nvbkey,LOG_PROB_OF_MINI):
-                            #print "tritag[%s] so1[%s] winning with %g over %g"%(qkey,ekey,nobst,vb.get(nvbkey,LOG_PROB_OF_MINI))
-                            vb[nvbkey] = nobst
-                            prev_a = taga
-                    taga = prev_a
-                    obpkey = (t-1,taga,tagb)
-                    nbpkey = (t,tagb,tagc)
-                    if bp.has_key(obpkey):
-                        bp[nbpkey] = bp[obpkey] + [tagc]
-                    else:
-                        bp[nbpkey] = [tagb,tagc]
-
-        maxst = LOG_PROB_OF_MINI
-        lastb = None
-        lastc = None
-        last = T-1
-        for tagb in taglist:
-            for tagc in taglist:
-                nvbkey = (last,tagb,tagc)
-                if vb.has_key(nvbkey) and vb.get(nvbkey) > maxst:
-                    maxst = vb[nvbkey]
-                    lastc = tagb
-                    lastb = tagc
-
-        path = bp[(last,lastb,lastc)]
-        #print path
-        taggedlist = []
-        n = len(owords)
+    for sent in brown_dev_words[0:1]:
+        path = viterbi_sent(sent,known_words,tagset,q_values,e_values)
+        n = len(sent)
+        tagged_pairs = []
+        print path
+        print sent
         for i in range(n):
-            tgwd = "%s/%s"%(owords[i],path[i])
-            taggedlist.append(tgwd)
-
-        sent = " ".join(taggedlist) + "\r\n"
-        print "."
-        #print "TAGGED:",sent
+            pair = "%s/%s"%(sent[i],path[i])
+            tagged_pairs.append(pair)
+        sent = " ".join([])
+        print "TAGGED:",sent
         tagged.append(sent)
     return tagged
 
@@ -280,13 +254,11 @@ def q5_output(tagged, filename):
 # terminal newline, not a list of tokens. 
 def nltk_tagger(brown_words, brown_tags, brown_dev_words):
     # Hint: use the following line to format data to what NLTK expects for training
-    training = [ zip(brown_words[i],brown_tags[i])[2:-2] for i in xrange(0,len(brown_words)) ]
+    training = [ zip(brown_words[i],brown_tags[i]) for i in xrange(len(brown_words)) ]
 
-    #from nltk.corpus import brown
-    #training = brown.tagged_sents()
-    default_tagger = nltk.DefaultTagger('NOUN')
-    bigram_tagger = nltk.BigramTagger(train=training, backoff=default_tagger)
-    trigram_tagger = nltk.TrigramTagger(train=training, backoff=bigram_tagger)
+    default_tagger = nltk.DefaultTagger('NN')
+    bigram_tagger = nltk.BigramTagger(training, backoff=default_tagger)
+    trigram_tagger = nltk.TrigramTagger(training, backoff=bigram_tagger)
 
     # IMPLEMENT THE REST OF THE FUNCTION HERE
     tagged = []
@@ -294,7 +266,7 @@ def nltk_tagger(brown_words, brown_tags, brown_dev_words):
     for words in brown_dev_words:
         wtlist = trigram_tagger.tag(words)
         strlist = map( lambda wt:"%s/%s"%(wt[0],wt[1]), wtlist)
-        tagged.append( " ".join(strlist)+"\r\n")
+        tagged.append( " ".join(strlist))
     return tagged
 
 # This function takes the output of nltk_tagger() and outputs it to file
