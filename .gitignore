@@ -3,3 +3,5 @@ output/
 .idea/
 *.pyc
 *.model
+*.pdf
+*.answer

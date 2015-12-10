@@ -260,7 +260,7 @@ def viterbi(brown_dev_words, tagset, known_words, q_values, e_values):
             taggedlist.append(tgwd)
 
         sent = " ".join(taggedlist) + "\r\n"
-        print "."
+        #print "."
         #print "TAGGED:",sent
         tagged.append(sent)
     return tagged

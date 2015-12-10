@@ -1,0 +1,289 @@
+import A
+from sklearn.feature_extraction import DictVectorizer
+import nltk
+from nltk.tokenize import RegexpTokenizer,WhitespaceTokenizer
+from nltk.corpus import stopwords
+from nltk.stem.lancaster import LancasterStemmer
+
+from collections import defaultdict
+import math
+from sklearn import svm
+from sklearn import neighbors
+import pdb
+
+# You might change the window size
+window_size = 15
+feature_size = 5
+
+# B.1.a,b,c,d
+def extract_features(data):
+    '''
+    :param data: list of instances for a given lexelt with the following structure:
+        {
+			[(instance_id, left_context, head, right_context, sense_id), ...]
+        }
+    :return: features: A dictionary with the following structure
+             { instance_id: {f1:count, f2:count,...}
+            ...
+            }
+            labels: A dictionary with the following structure
+            { instance_id : sense_id }
+    '''
+    features = {}
+    labels = {}
+    stops = set(stopwords.words("english"))
+    st = LancasterStemmer()
+    stem_lambda = lambda w:st.stem(w)
+    #tokenizer = RegexpTokenizer(r'\w+')
+    tokenizer = WhitespaceTokenizer()
+
+
+
+
+    sense_counter = defaultdict(int)
+    senseword_counter = defaultdict(int)
+    sensetag_counter = defaultdict(int)
+    word_counter = defaultdict(int)
+    tag_counter = defaultdict(int)
+
+    tokendict = {}
+    #pdb.set_trace()
+    context_wordset = set()
+    for instance in data:
+        lwords = tokenizer.tokenize(instance[1])[-window_size:]
+        rwords = tokenizer.tokenize(instance[3])[:window_size]
+
+        ll = nltk.pos_tag(lwords)
+        rr = nltk.pos_tag(rwords)
+        ll = [(stem_lambda(w),t) for w,t in ll if w not in stops and t.isalpha()]
+        rr = [(stem_lambda(w),t) for w,t in rr if w not in stops and t.isalpha()]
+
+        ww = ll+rr
+        for w,t in ww:
+            context_wordset.add(w)
+
+
+        www = ()
+        sense = instance[4]
+        sense_counter[sense]+=1
+        #tokendict[instance] = (ll[-feature_size:]+rr[0:feature_size])
+        tokendict[instance] = ll,rr
+        #contextset.union(www)
+        # for w,t in ww:
+        #     senseword_counter[(sense,w)]+=1
+        #     sensetag_counter[(sense,t)]+=1
+        #     word_counter[w]+=1
+        #     tag_counter[t]+=1
+
+    #topwords = sorted(word_counter.items(),key=lambda t:t[1], reverse=True)[:15]
+    #toptags = sorted(tag_counter.items(),key=lambda t:t[1], reverse=True)[:15]
+
+    #topwordset = set([ w for w,c in topwords])
+    #toptagset = set([t for t,c in toptags])
+
+
+    #pdb.set_trace()
+    for instance in data:
+        ll,rr = tokendict[instance]
+        instanceid = instance[0]
+        sense = instance[4]
+        currentwordcounter = defaultdict(int)
+        currenttagcounter = defaultdict(int)
+
+        wordcontext = [
+            ll[-3][0] if len(ll)>=3 else '',
+            ll[-2][0] if len(ll)>=2 else '',
+            ll[-1][0] if len(ll)>=1 else '',
+            rr[0][0] if len(rr)>=1 else '',
+            rr[1][0] if len(rr)>=2 else '',
+            rr[2][0] if len(rr)>=3 else '',
+        ]
+        tagcontext = [
+            ll[-3][1] if len(ll)>=3 else '',
+            ll[-2][1] if len(ll)>=2 else '',
+            ll[-1][1] if len(ll)>=1 else '',
+            rr[0][1] if len(rr)>=1 else '',
+            rr[1][1] if len(rr)>=2 else '',
+            rr[2][1] if len(rr)>=3 else '',
+        ]
+
+
+        feature={
+            'wn2':wordcontext[1],
+            'wn1':wordcontext[2],
+            'w1':wordcontext[3],
+            'w2':wordcontext[4],
+            'wn12':"".join(wordcontext[1:3]),
+            'wn23':"".join(wordcontext[2:4]),
+            'wn34':"".join(wordcontext[3:5]),
+            'wn012':"".join(wordcontext[0:3]),
+            'wn123':"".join(wordcontext[1:4]),
+            'wn234':"".join(wordcontext[2:5]),
+            'wn345':"".join(wordcontext[3:6]),
+            'pn3':tagcontext[0],
+            'pn2':tagcontext[1],
+            'pn1':tagcontext[2],
+            'p1':tagcontext[3],
+            'p2':tagcontext[4],
+            'p3':tagcontext[5],
+        }
+
+        #wordsenseC/wordC-wordSenseC*(currentWordC/wordc)
+        # for i in range(2,feature_size*2-2):
+        #     wordkey = 'w%d'%(i)
+        #     wordCountkey = 'wc%d'%(i)
+        #     wordCorkey = 'wcr%d'%(i)
+        #     tagkey = 'tc%d'%(i)
+        #     tagCountkey = 't%d'%(i)
+        #     tagCorkey = 'tcr%d'%(i)
+        #     currentword = www[i][0] if len(www)>=feature_size*2 else ''
+        #     currenttag  = www[i][1] if len(www)>=feature_size*2 else ''
+        #     wordsensecount = senseword_counter[(sense,currentword)]
+        #     tagsensecount = sensetag_counter[(sense,currenttag)]
+        #     currentwordcount = currentwordcounter[currentword]
+        #     currenttagcount = currenttagcounter[currenttag]
+        #     wordtotalcount = word_counter[currentword]
+        #     tagtotalcount = tag_counter[currenttag]
+        #     feature[wordkey] = currentword
+        #     feature[wordCountkey] = currentwordcount
+        #     feature[tagkey] = currenttag
+        #     feature[tagCountkey] = currenttagcount
+            #wcor = float(wordsensecount)/float(wordtotalcount-wordsensecount+1.0) * float(currentwordcount)/float(wordtotalcount+1.0)
+            #tcor = float(tagsensecount)/float(tagtotalcount-tagsensecount+1.0)*float(currenttagcount)/float(tagtotalcount+1.0)
+            #feature[wordCorkey] = math.log(wcor) if wcor>0 else 0
+            #feature[tagCorkey] = math.log(tcor) if tcor>0 else 0
+
+        features[instanceid] = feature
+        labels[instanceid] = sense
+
+    # implement your code here
+
+    return features, labels
+
+# implemented for you
+def vectorize(train_features,test_features):
+    '''
+    convert set of features to vector representation
+    :param train_features: A dictionary with the following structure
+             { instance_id: {f1:count, f2:count,...}
+            ...
+            }
+    :param test_features: A dictionary with the following structure
+             { instance_id: {f1:count, f2:count,...}
+            ...
+            }
+    :return: X_train: A dictionary with the following structure
+             { instance_id: [f1_count,f2_count, ...]}
+            ...
+            }
+            X_test: A dictionary with the following structure
+             { instance_id: [f1_count,f2_count, ...]}
+            ...
+            }
+    '''
+    X_train = {}
+    X_test = {}
+
+    vec = DictVectorizer()
+    vec.fit(train_features.values())
+    for instance_id in train_features:
+        X_train[instance_id] = vec.transform(train_features[instance_id]).toarray()[0]
+
+    for instance_id in test_features:
+        X_test[instance_id] = vec.transform(test_features[instance_id]).toarray()[0]
+
+    pdb.set_trace()
+    return X_train, X_test
+
+#B.1.e
+def feature_selection(X_train,X_test,y_train):
+    '''
+    Try to select best features using good feature selection methods (chi-square or PMI)
+    or simply you can return train, test if you want to select all features
+    :param X_train: A dictionary with the following structure
+             { instance_id: [f1_count,f2_count, ...]}
+            ...
+            }
+    :param X_test: A dictionary with the following structure
+             { instance_id: [f1_count,f2_count, ...]}
+            ...
+            }
+    :param y_train: A dictionary with the following structure
+            { instance_id : sense_id }
+    :return:
+    '''
+
+
+
+    # implement your code here
+
+    #return X_train_new, X_test_new
+    # or return all feature (no feature selection):
+    return X_train, X_test
+
+# B.2
+def classify(X_train, X_test, y_train):
+    '''
+    Train the best classifier on (X_train, and y_train) then predict X_test labels
+
+    :param X_train: A dictionary with the following structure
+            { instance_id: [w_1 count, w_2 count, ...],
+            ...
+            }
+
+    :param X_test: A dictionary with the following structure
+            { instance_id: [w_1 count, w_2 count, ...],
+            ...
+            }
+
+    :param y_train: A dictionary with the following structure
+            { instance_id : sense_id }
+
+    :return: results: a list of tuples (instance_id, label) where labels are predicted by the best classifier
+    '''
+
+    svm_clf = svm.LinearSVC()
+    knn_clf = neighbors.KNeighborsClassifier(n_neighbors=10)
+
+    XI=X_train.items()
+    XI.sort()
+    X=[ i[1] for i in XI]
+    YI=y_train.items()
+    YI.sort()
+    Y=[ i[1] for i in YI]
+
+    XTI=X_test.items()
+    XTI.sort()
+    XT=[i[1] for i in XTI]
+    XTT=[i[0] for i in XTI]
+
+    svm_clf.fit(X,Y)
+    #knn_clf.fit(X,Y)
+
+    svm_pred = svm_clf.predict(XT)
+    #knn_pred = knn_clf.predict(XT)
+
+    svm_results = zip(XTT,svm_pred)
+    #knn_results = zip(XTT,knn_pred)
+
+    results = svm_results
+
+
+    # implement your code here
+
+    return results
+
+# run part B
+def run(train, test, language, answer):
+    results = {}
+
+    for lexelt in train:
+
+        train_features, y_train = extract_features(train[lexelt])
+        test_features, _ = extract_features(test[lexelt])
+
+        X_train, X_test = vectorize(train_features,test_features)
+        X_train_new, X_test_new = feature_selection(X_train, X_test,y_train)
+        results[lexelt] = classify(X_train_new, X_test_new,y_train)
+
+    A.print_results(results, answer)
