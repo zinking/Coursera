@@ -5,3 +5,6 @@ output/
 *.model
 *.pdf
 *.answer
+*.dat
+*.train
+**/target/**
