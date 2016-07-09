@@ -77,7 +77,10 @@ class FunSetSuite extends FunSuite {
     val s1 = singletonSet(1)
     val s2 = singletonSet(2)
     val s3 = singletonSet(3)
+    val s4 = singletonSet(4)
+    val s5 = singletonSet(5)
     val s7 = singletonSet(7)
+    val s1000 = singletonSet(1000)
   }
 
   /**
@@ -101,6 +104,13 @@ class FunSetSuite extends FunSuite {
       assert(contains(s1, 1), "Singleton")
       assert(!contains(s1, 2), "Singleton")
     }
+
+    new TestSets {
+      val m2 = map(s1, x=>x+1)
+      assert(contains(m2,2), "test mapping")
+      val m999 = map(s1000, x=>x-1)
+      assert(contains(m999,999))
+    }
   }
 
   test("union contains all elements of each set") {
@@ -114,6 +124,14 @@ class FunSetSuite extends FunSuite {
 
       val ss = union(s, s7)
       assert(!forall(ss, (p)=>p<3),"not all less than 3")
+
+      val ss2:Set = union(union(union(union(s1, s2),s3),s4),s5)
+      printSet( ss2 )
+      assert(forall(ss2, (p)=>p<6),"test all less than 5")
+
+      val mm2:Set = map(ss2, x=>x-1)
+      printSet( mm2 )
+      //assert(mm2.toString == "{0,1,2,3,4}")
     }
   }
 

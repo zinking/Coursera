@@ -134,17 +134,30 @@ class Empty extends TweetSet {
   def foreach(f: Tweet => Unit): Unit = ()
 }
 
-class NonEmpty(elem: Tweet, left: TweetSet, right: TweetSet) extends TweetSet {
+case class NonEmpty(elem: Tweet, left: TweetSet, right: TweetSet) extends TweetSet {
 
     def filterAcc(p: Tweet => Boolean, acc: TweetSet): TweetSet =
       if (p(elem)) {
-        this.remove(elem).filterAcc(p,acc.incl(elem))
+        val l = left.filterAcc(p, new Empty)
+        val r = right.filterAcc(p, acc.incl(elem))
+        l union r
       } else {
-        this.remove(elem).filterAcc(p,acc)
+        val l = left.filterAcc(p, new Empty)
+        val r = right.filterAcc(p, acc)
+        l union r
       }
 
   override def union(that: TweetSet): TweetSet =
-    this.remove(elem).union(that.incl(elem))
+    that match {
+      case NonEmpty(e,l,r) =>
+        if (e.text < elem.text) {
+          NonEmpty(elem, left.union(l).incl(e), right.union(r))
+        } else {
+          NonEmpty(e, left.union(l).incl(elem), right.union(r))
+        }
+      case _ =>
+        this
+    }
 
   override def mostRetweeted: Tweet = {
     var m = elem

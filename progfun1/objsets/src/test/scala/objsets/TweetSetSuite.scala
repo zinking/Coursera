@@ -5,6 +5,7 @@ import org.scalatest.FunSuite
 
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
+import TweetReader._
 
 @RunWith(classOf[JUnitRunner])
 class TweetSetSuite extends FunSuite {
@@ -71,4 +72,9 @@ class TweetSetSuite extends FunSuite {
     }
   }
 
+  test("failed ac") {
+    new TestSets {
+      assert(size(allTweets.filter(tw => tw.retweets == 320)) === 0)
+    }
   }
+}

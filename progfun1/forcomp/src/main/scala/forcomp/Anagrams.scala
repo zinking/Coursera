@@ -173,81 +173,26 @@ object Anagrams {
    *  Note: There is only one anagram of an empty sentence.
    */
   def sentenceAnagrams(sentence: Sentence): List[Sentence] = {
+    /*yeah I managed to wrote it*/
     def sentAna(occurs:Occurrences, lefts:List[Occurrences]):List[Sentence] = {
-      val lll = for {
+      if (occurs.isEmpty)
+        return List(List.empty)
+      for {
         l <- lefts
-        if isSub(occurs,l)
+        if dictionaryByOccurrences.contains(l)
+        roccurs = subtract(occurs,l)
+        rl = lefts.filter(isSub(roccurs,_))
+        rsents = sentAna(roccurs,rl)
+        words = dictionaryByOccurrences.getOrElse(l,List.empty)
+        rsent <- rsents
+        word <- words
       } yield {
-        if (occurs.isEmpty)
-          return List(List.empty)
-
-        val roccurs = subtract(occurs,l)
-        val sents = sentAna(roccurs,lefts)
-        val words = dictionaryByOccurrences.getOrElse(l,List.empty)
-        for{
-          sent <- sents
-          word <- words
-          if sentenceOccurrences(sent) == roccurs
-        }
-          yield {
-            word :: sent
-          }
+        word :: rsent
       }
-      lll.flatten
-//      lefts match {
-//        case l::ll =>
-//          if (occurs.isEmpty)
-//            return List(List.empty)
-//
-//          if (!isSub(occurs,l)){
-//            sentAna(occurs,ll)
-//          } else {
-//            val roccurs = subtract(occurs,l)
-//            val sents = sentAna(roccurs,lefts)
-//            val words = dictionaryByOccurrences.getOrElse(l,List.empty)
-//            for{
-//              sent <- sents
-//              word <- words
-//              if sentenceOccurrences(sent) == roccurs
-//            }
-//              yield {
-//                word :: sent
-//              }
-//          }
-//        case _ =>
-//          List(List.empty)
-//      }
     }
-
 
     val so = sentenceOccurrences(sentence)
     val soc = combinations(so).filter(o => dictionaryByOccurrences.contains(o))
-    //val soc = combinations(so)
     sentAna(so,soc)
-//    first version
-//    def occurence2Sentence(curOccur:Occurrences, lefts:List[Occurrences], sents:List[Sentence]):List[Sentence] = {
-//      if (curOccur.isEmpty) {
-//        sents
-//      } else {
-//        lefts match {
-//          case l::ll =>
-//            dictionaryByOccurrences.get(l) match {
-//              case Some(wds) =>
-//                for(
-//                  wd <- wds
-//                ) yield occurence2Sentence(
-//                  subtract(curOccur,l),
-//                  ll,
-//                  sents.map{ st:List[Word] =>
-//                    st.+:(wd)
-//                  }
-//                ) flatten
-//            }
-//          case _ =>
-//            List(List.empty)
-//        }
-//      }
-//    }
-//    occurence2Sentence(so,soc,List(List.empty))
   }
 }
