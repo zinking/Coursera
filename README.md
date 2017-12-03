@@ -1,5 +1,7 @@
-# Coursera Works repo
+# Coursera Works repo / Coursera 课程作业存放点
 
-### reactive programming scala
+最喜欢的课程
 
-### r-programming
+- type safe 的所有scala课程
+- [andrew] ng machine learning
+- [stepik] dependent types 
