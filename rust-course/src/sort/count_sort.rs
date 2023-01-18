@@ -56,7 +56,7 @@ mod test {
 
     #[test]
     fn gcount_sort_u8() {
-        let mut arr : Vec<u8> = vec![6, 5, 4, 3, 2, 1];
+        let mut _arr : Vec<u8> = vec![6, 5, 4, 3, 2, 1];
         // TODO: fix me
         // gcount_sort(&mut arr);
         // assert_eq!(arr, vec![1, 2, 3, 4, 5, 6]);
