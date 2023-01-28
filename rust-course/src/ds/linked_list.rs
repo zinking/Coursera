@@ -186,7 +186,10 @@ impl<T> LinkedList<T> {
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
-        while self.delete_head().is_some() {}
+        // while self.delete_head().is_some() {}
+        while self.length > 0 {
+            self.delete_head();
+        }
     }
 }
 
@@ -249,5 +252,17 @@ mod tests {
         list.insert(1, 2);
         list.insert(1, 3);
         assert_eq!(list.get(1), Some(&3));
+    }
+
+    #[test]
+    fn delete_works() {
+        let mut list = LinkedList::<i32>::new();
+        list.insert(0, 1);
+        list.insert(1, 2);
+        list.insert(1, 3);
+
+        list.delete(2);
+        list.delete(0);
+        assert_eq!(list.get(0), Some(&3));
     }
 }
